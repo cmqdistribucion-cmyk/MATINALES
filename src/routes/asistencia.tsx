@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   listarPersonas,
+  obtenerCapacitacionActiva,
+  guardarMarcaAsistencia,
+  guardarMarcasMasivas,
+  listarMarcasCapacitacion,
 } from "@/lib/capacitaciones";
 
 const STORAGE_KEY = "matinal-en-curso";
@@ -21,21 +25,74 @@ export const Route = createFileRoute("/asistencia")({
 });
 
 function Asistencia() {
+  const qc = useQueryClient();
   const { data: personas = [] } = useQuery({ queryKey: ["personas"], queryFn: listarPersonas });
   const [marcas, setMarcas] = useState<Record<string, boolean>>({});
   const [capActiva, setCapActiva] = useState<{ id?: string; titulo?: string | undefined } | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const capActivaRef = useRef<string | null>(null);
+  const cargadoRef = useRef(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const est: EstadoGuardado = JSON.parse(raw);
-        if (est?.marcas) setMarcas(est.marcas);
-        if (est?.capacitacionId) setCapActiva({ id: est.capacitacionId, titulo: est.titulo });
+    (async () => {
+      try {
+        const cap = await obtenerCapacitacionActiva();
+        if (cap) {
+          capActivaRef.current = cap.id;
+          setCapActiva({ id: cap.id, titulo: cap.titulo });
+          try {
+            const marcasBD = await listarMarcasCapacitacion(cap.id);
+            setMarcas((prev) => ({ ...prev, ...marcasBD }));
+          } catch (e) {
+            console.error("Error cargando marcas de BD", e);
+          }
+        } else {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+              const est: EstadoGuardado = JSON.parse(raw);
+              if (est?.marcas) setMarcas((prev) => ({ ...prev, ...est.marcas }));
+              if (est?.capacitacionId) {
+                capActivaRef.current = est.capacitacionId;
+                setCapActiva({ id: est.capacitacionId, titulo: est.titulo });
+              }
+            }
+          } catch {}
+        }
+      } catch (e) {
+        console.error(e);
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const est: EstadoGuardado = JSON.parse(raw);
+            if (est?.marcas) setMarcas((prev) => ({ ...prev, ...est.marcas }));
+            if (est?.capacitacionId) {
+              capActivaRef.current = est.capacitacionId;
+              setCapActiva({ id: est.capacitacionId, titulo: est.titulo });
+            }
+          }
+        } catch {}
+      } finally {
+        cargadoRef.current = true;
       }
-    } catch {
-      /* ignore */
-    }
+    })();
+    const intervalo = setInterval(async () => {
+      try {
+        const cap = await obtenerCapacitacionActiva();
+        if (cap && cap.id !== capActivaRef.current) {
+          capActivaRef.current = cap.id;
+          setCapActiva({ id: cap.id, titulo: cap.titulo });
+          try {
+            const marcasBD = await listarMarcasCapacitacion(cap.id);
+            setMarcas((prev) => ({ ...prev, ...marcasBD }));
+          } catch {}
+        } else if (!cap && capActivaRef.current) {
+          capActivaRef.current = null;
+          setCapActiva(null);
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(intervalo);
   }, []);
 
   useEffect(() => {
@@ -45,20 +102,53 @@ function Asistencia() {
       if (raw) base = JSON.parse(raw) as EstadoGuardado;
       base.marcas = marcas;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }, [marcas]);
 
-  const presentes = personas.filter((p) => marcas[p.id] === true).length;
-  const ausentes = personas.filter((p) => marcas[p.id] === false).length;
+  async function marcarIndividual(personaId: string, presente: boolean) {
+    setMarcas((m) => ({ ...m, [personaId]: presente }));
+    const persona = personas.find((p) => p.id === personaId);
+    const capId = capActivaRef.current;
+    if (!persona || !capId) return;
+    setSincronizando(true);
+    try {
+      await guardarMarcaAsistencia(capId, { id: persona.id, nombre: persona.nombre, area: persona.area }, presente);
+    } catch (e) {
+      console.error(e);
+      toast.error("No se pudo guardar la marca en la nube");
+    } finally {
+      setSincronizando(false);
+    }
+    void qc.invalidateQueries({ queryKey: ["asistencias", capId] });
+  }
 
-  function marcarTodos(valor: boolean) {
+  async function marcarTodos(valor: boolean) {
     const m: Record<string, boolean> = {};
     personas.forEach((p) => (m[p.id] = valor));
     setMarcas(m);
-    toast.success(valor ? "Todos marcados como presentes" : "Todos marcados como ausentes");
+    const capId = capActivaRef.current;
+    if (capId) {
+      setSincronizando(true);
+      try {
+        await guardarMarcasMasivas(
+          capId,
+          personas.map((p) => ({ persona: { id: p.id, nombre: p.nombre, area: p.area }, presente: valor })),
+        );
+        toast.success(valor ? "Todos marcados como presentes y guardados" : "Todos marcados como ausentes y guardados");
+      } catch (e) {
+        console.error(e);
+        toast.error("No se pudieron guardar todas las marcas en la nube");
+      } finally {
+        setSincronizando(false);
+      }
+    } else {
+      toast.success(valor ? "Todos marcados como presentes" : "Todos marcados como ausentes");
+    }
+    void qc.invalidateQueries({ queryKey: ["asistencias", capId] });
   }
+
+  const presentes = personas.filter((p) => marcas[p.id] === true).length;
+  const ausentes = personas.filter((p) => marcas[p.id] === false).length;
 
   return (
     <div className="min-h-screen bg-cream font-display text-ink">
@@ -104,7 +194,23 @@ function Asistencia() {
               {capActiva.titulo ?? "Matinal activa"}
             </p>
             <p className="mt-1 text-sm text-cream/80">
-              Las marcas se guardan automáticamente y se registran al finalizar en el cronómetro.
+              ✅ Las marcas se guardan EN VIVO en la nube y se registran al finalizar en el cronómetro (funciona incluso en navegadores/distintos dispositivos).
+            </p>
+            {sincronizando && (
+              <p className="mt-2 text-xs font-semibold text-cream/70">Sincronizando con la nube…</p>
+            )}
+          </div>
+        )}
+        {!capActiva?.id && (
+          <div className="rounded-[min(1vw,16px)] bg-yellow-100 p-5 text-ink ring-1 ring-yellow-300">
+            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-yellow-800">
+              Sin MATINAL activa
+            </p>
+            <p className="mt-1 text-base font-semibold leading-tight">
+              Primero iniciá una MATINAL en la página del Cronómetro.
+            </p>
+            <p className="mt-1 text-sm text-yellow-900/70">
+              Si no ves la MATINAL que iniciaste, esperá unos segundos o recargá la página.
             </p>
           </div>
         )}
@@ -116,19 +222,21 @@ function Asistencia() {
             <div>
               <h2 className="text-2xl font-semibold leading-tight">Pasar lista</h2>
               <p className="mt-1 text-sm text-ink/60">
-                Marcá Sí o No por persona en cualquier momento. Todo se guarda al finalizar la MATINAL en el Cronómetro.
+                Marcá Sí o No por persona en cualquier momento. Todo se guarda en tiempo real en la nube.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => marcarTodos(true)}
-                className="rounded-full bg-moss px-4 py-2 text-sm font-semibold text-cream ring-1 ring-moss/30 shadow-sm shadow-moss/10 hover:bg-moss/90 transition-colors"
+                disabled={!capActiva?.id}
+                className="rounded-full bg-moss px-4 py-2 text-sm font-semibold text-cream ring-1 ring-moss/30 shadow-sm shadow-moss/10 hover:bg-moss/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Marcar todos presentes
               </button>
               <button
                 onClick={() => marcarTodos(false)}
-                className="rounded-full bg-signal px-4 py-2 text-sm font-semibold text-cream ring-1 ring-signal/30 shadow-sm shadow-signal/10 hover:bg-signal/90 transition-colors"
+                disabled={!capActiva?.id}
+                className="rounded-full bg-signal px-4 py-2 text-sm font-semibold text-cream ring-1 ring-signal/30 shadow-sm shadow-signal/10 hover:bg-signal/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Marcar todos ausentes
               </button>
@@ -169,22 +277,24 @@ function Asistencia() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setMarcas((m) => ({ ...m, [p.id]: true }))}
+                    onClick={() => marcarIndividual(p.id, true)}
+                    disabled={!capActiva?.id}
                     className={`rounded-full px-4 py-1.5 text-sm ring-1 ring-steel ${
                       marcas[p.id] === true
                         ? "bg-moss font-semibold text-cream"
                         : "bg-card font-medium text-ink/40"
-                    }`}
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
                   >
                     Sí
                   </button>
                   <button
-                    onClick={() => setMarcas((m) => ({ ...m, [p.id]: false }))}
+                    onClick={() => marcarIndividual(p.id, false)}
+                    disabled={!capActiva?.id}
                     className={`rounded-full px-4 py-1.5 text-sm ring-1 ring-steel ${
                       marcas[p.id] === false
                         ? "bg-signal font-semibold text-cream"
                         : "bg-card font-medium text-ink/40"
-                    }`}
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
                   >
                     No
                   </button>

@@ -7,6 +7,7 @@ import {
   listarPersonas,
   iniciarCapacitacion,
   finalizarCapacitacion,
+  listarMarcasCapacitacion,
 } from "@/lib/capacitaciones";
 
 const STORAGE_KEY = "matinal-en-curso";
@@ -146,6 +147,42 @@ function CronometroPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!capacitacionId) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const marcasBD = await listarMarcasCapacitacion(capacitacionId);
+        if (!mounted) return;
+        persistir({ marcas: { ...leerMarcasLS(), ...marcasBD } });
+      } catch (e) {
+        console.error("Error cargando marcas de Supabase", e);
+      }
+    })();
+    const intervaloSync = setInterval(async () => {
+      try {
+        const marcasBD = await listarMarcasCapacitacion(capacitacionId);
+        if (!mounted) return;
+        persistir({ marcas: { ...leerMarcasLS(), ...marcasBD } });
+      } catch {}
+    }, 4000);
+    return () => {
+      mounted = false;
+      clearInterval(intervaloSync);
+    };
+  }, [capacitacionId]);
+
+  function leerMarcasLS(): Record<string, boolean> {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const est = JSON.parse(raw) as EstadoGuardado;
+        return est.marcas ?? {};
+      }
+    } catch {}
+    return {};
+  }
+
   function persistir(extra: Partial<EstadoGuardado> = {}) {
     if (!capacitacionId) return;
     let marcasActuales: Record<string, boolean> = {};
@@ -231,18 +268,29 @@ function CronometroPage() {
     }
     try {
       setGuardando(true);
-      let marcasGuardadas: Record<string, boolean> = {};
+      toast.loading("Leyendo asistencia de la nube…", { id: "finalizar-carga" });
+      let marcasBD: Record<string, boolean> = {};
+      try {
+        marcasBD = await listarMarcasCapacitacion(capacitacionId);
+      } catch (e) {
+        console.error("Error leyendo marcas de Supabase al finalizar", e);
+      }
+      let marcasLS: Record<string, boolean> = {};
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) marcasGuardadas = (JSON.parse(raw) as EstadoGuardado).marcas ?? {};
+        if (raw) marcasLS = (JSON.parse(raw) as EstadoGuardado).marcas ?? {};
       } catch {
         /* ignore */
       }
+      const marcasFinales: Record<string, boolean> = { ...marcasLS, ...marcasBD };
+      const totalMarcadas = Object.keys(marcasFinales).filter(
+        (k) => marcasFinales[k] === true || marcasFinales[k] === false,
+      ).length;
       const asistentes = personas.map((p) => ({
         persona_id: p.id,
         nombre: p.nombre,
         area: p.area,
-        presente: marcasGuardadas[p.id] ?? false,
+        presente: marcasFinales[p.id] ?? false,
       }));
       await finalizarCapacitacion(capacitacionId, duracion, asistentes);
       await qc.invalidateQueries({ queryKey: ["historial"] });
@@ -258,9 +306,14 @@ function CronometroPage() {
       setTitulo("");
       setDescripcion("");
       startTimestampRef.current = null;
-      toast.success("MATINAL guardada correctamente en el historial");
+      toast.dismiss("finalizar-carga");
+      toast.success(
+        `MATINAL guardada. Asistencias cargadas de la nube: ${totalMarcadas} de ${personas.length} marcadas.`,
+        { duration: 6000 },
+      );
     } catch (e) {
       console.error(e);
+      toast.dismiss("finalizar-carga");
       toast.error("No se pudo guardar la MATINAL");
     } finally {
       setGuardando(false);

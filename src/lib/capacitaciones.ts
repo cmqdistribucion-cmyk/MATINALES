@@ -70,6 +70,77 @@ export async function iniciarCapacitacion(titulo: string, descripcion: string) {
   return data as Capacitacion;
 }
 
+export async function obtenerCapacitacionActiva(): Promise<Capacitacion | null> {
+  const { data, error } = await supabase
+    .from("capacitaciones")
+    .select("id, titulo, descripcion, inicio, fin, duracion_segundos")
+    .is("fin", null)
+    .order("inicio", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data?.[0] as Capacitacion) ?? null;
+}
+
+export async function guardarMarcaAsistencia(
+  capacitacionId: string,
+  persona: { id: string; nombre: string; area: string | null },
+  presente: boolean,
+) {
+  const { error: existsError } = await supabase
+    .from("asistencias")
+    .select("id")
+    .eq("capacitacion_id", capacitacionId)
+    .eq("persona_id", persona.id)
+    .maybeSingle();
+  if (existsError && existsError.code !== "PGRST116") throw existsError;
+
+  if ((existsError && existsError.code === "PGRST116") || !existsError) {
+    if (!existsError) {
+      const { error: updErr } = await supabase
+        .from("asistencias")
+        .update({ presente, nombre: persona.nombre, area: persona.area })
+        .eq("capacitacion_id", capacitacionId)
+        .eq("persona_id", persona.id);
+      if (updErr) throw updErr;
+      return;
+    }
+  }
+
+  const { error: insErr } = await supabase.from("asistencias").insert({
+    capacitacion_id: capacitacionId,
+    persona_id: persona.id,
+    nombre: persona.nombre,
+    area: persona.area,
+    presente,
+  });
+  if (insErr) throw insErr;
+}
+
+export async function guardarMarcasMasivas(
+  capacitacionId: string,
+  marcas: { persona: { id: string; nombre: string; area: string | null }; presente: boolean }[],
+) {
+  if (marcas.length === 0) return;
+  for (const m of marcas) {
+    await guardarMarcaAsistencia(capacitacionId, m.persona, m.presente);
+  }
+}
+
+export async function listarMarcasCapacitacion(
+  capacitacionId: string,
+): Promise<Record<string, boolean>> {
+  const { data, error } = await supabase
+    .from("asistencias")
+    .select("persona_id, presente")
+    .eq("capacitacion_id", capacitacionId);
+  if (error) throw error;
+  const out: Record<string, boolean> = {};
+  (data ?? []).forEach((r: any) => {
+    if (r.persona_id) out[r.persona_id] = !!r.presente;
+  });
+  return out;
+}
+
 export async function finalizarCapacitacion(
   capacitacionId: string,
   duracionSegundos: number,
