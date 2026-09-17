@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   listarPersonas,
@@ -21,10 +21,9 @@ export const Route = createFileRoute("/asistencia")({
 });
 
 function Asistencia() {
-  const qc = useQueryClient();
   const { data: personas = [] } = useQuery({ queryKey: ["personas"], queryFn: listarPersonas });
   const [marcas, setMarcas] = useState<Record<string, boolean>>({});
-  const [capActiva, setCapActiva] = useState<{ id?: string; titulo?: string } | null>(null);
+  const [capActiva, setCapActiva] = useState<{ id?: string; titulo?: string | undefined } | null>(null);
 
   useEffect(() => {
     try {

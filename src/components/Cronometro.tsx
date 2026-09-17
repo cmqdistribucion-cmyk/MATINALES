@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, Volume2, VolumeX } from "lucide-react";
 import { formatearTiempo } from "@/lib/capacitaciones";
 
 type Props = {
@@ -12,6 +12,8 @@ type Props = {
   onFinalizar: () => void;
   pantallaCompleta: boolean;
   onPantallaCompleta: (v: boolean) => void;
+  alarma12min?: boolean;
+  onDetenerAlarma?: () => void;
 };
 
 function Digitos({ segundos, grande }: { segundos: number; grande?: boolean }) {
@@ -43,11 +45,13 @@ export function Cronometro(props: Props) {
     onFinalizar,
     pantallaCompleta,
     onPantallaCompleta,
+    alarma12min,
+    onDetenerAlarma,
   } = props;
 
   if (pantallaCompleta) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-8 bg-ink px-6">
+      <div className={`fixed inset-0 z-50 flex flex-col items-center justify-center gap-8 px-6 ${alarma12min ? "bg-signal animate-pulse" : "bg-ink"}`}>
         <p className="text-center text-2xl font-semibold uppercase tracking-tight text-cream sm:text-4xl">
           {titulo || "MATINAL"}
         </p>
@@ -58,6 +62,18 @@ export function Cronometro(props: Props) {
             {corriendo ? "Transcurriendo" : "Detenido"}
           </span>
         </div>
+        {alarma12min && (
+          <div className="flex items-center gap-3 rounded-full bg-cream px-5 py-3">
+            <Volume2 className="size-5 text-signal animate-pulse" />
+            <span className="text-sm font-bold text-ink">Alarma 12 min activada</span>
+            <button
+              onClick={onDetenerAlarma}
+              className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-1.5 text-xs font-semibold text-cream hover:bg-ink/80 transition-colors"
+            >
+              <VolumeX className="size-3.5" /> Silenciar
+            </button>
+          </div>
+        )}
         <button
           onClick={() => onPantallaCompleta(false)}
           className="inline-flex items-center gap-2 rounded-full bg-cream px-5 py-2.5 text-sm font-semibold text-ink"
@@ -113,14 +129,22 @@ export function Cronometro(props: Props) {
           >
             <Maximize2 className="size-4" /> Pantalla completa
           </button>
+          {alarma12min && onDetenerAlarma && (
+            <button
+              onClick={onDetenerAlarma}
+              className="inline-flex items-center gap-2 rounded-full bg-yellow-500 px-5 py-2.5 text-sm font-semibold text-ink ring-1 ring-yellow-500/40 shadow-sm shadow-yellow-500/10 hover:bg-yellow-500/90 transition-colors animate-pulse"
+            >
+              <Volume2 className="size-4" /> Silenciar alarma
+            </button>
+          )}
         </div>
       </div>
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-6 rounded-[min(1vw,16px)] bg-ink px-6 py-6 ring-1 ring-black/10">
+      <div className={`mt-6 flex flex-wrap items-center justify-between gap-6 rounded-[min(1vw,16px)] px-6 py-6 ring-1 ring-black/10 ${alarma12min ? "bg-signal animate-pulse" : "bg-ink"}`}>
         <Digitos segundos={segundos} />
         <div className="flex items-center gap-3">
           <span className={`size-3 rounded-full ${corriendo ? "bg-moss blink" : "bg-signal"}`} />
-          <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-cream/70">
-            {corriendo ? "Transcurriendo" : "Detenido"}
+          <span className={`text-[11px] font-bold uppercase tracking-[0.25em] ${alarma12min ? "text-ink/80" : "text-cream/70"}`}>
+            {alarma12min ? "¡12 MINUTOS ALCANZADOS!" : corriendo ? "Transcurriendo" : "Detenido"}
           </span>
         </div>
       </div>

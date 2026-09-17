@@ -32,13 +32,73 @@ function CronometroPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const [capacitacionId, setCapacitacionId] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [alarma12minActivada, setAlarma12minActivada] = useState(false);
   const startTimestampRef = useRef<number | null>(null);
   const intervalo = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const alarmaIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const alarmaActivadaRef = useRef(false);
 
   const { data: personas = [] } = useQuery({
     queryKey: ["personas"],
     queryFn: listarPersonas,
   });
+
+  function reproducirBeep() {
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioContextRef.current;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.5, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.25);
+      setTimeout(() => {
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.type = "sine";
+        osc2.frequency.value = 1100;
+        gain2.gain.setValueAtTime(0.5, ctx.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc2.start(ctx.currentTime);
+        osc2.stop(ctx.currentTime + 0.25);
+      }, 300);
+    } catch (e) {
+      console.error("No se pudo reproducir el beep:", e);
+    }
+  }
+
+  function detenerAlarma() {
+    if (alarmaIntervalRef.current) {
+      clearInterval(alarmaIntervalRef.current);
+      alarmaIntervalRef.current = null;
+    }
+    alarmaActivadaRef.current = false;
+    setAlarma12minActivada(false);
+  }
+
+  function iniciarAlarma() {
+    if (alarmaActivadaRef.current) return;
+    alarmaActivadaRef.current = true;
+    setAlarma12minActivada(true);
+    toast.warning("¡Alcanzaste los 12 minutos!", {
+      description: "Se están emitiendo bips de alarma",
+      duration: 5000,
+    });
+    reproducirBeep();
+    alarmaIntervalRef.current = setInterval(() => {
+      reproducirBeep();
+    }, 1500);
+  }
 
   useEffect(() => {
     try {
@@ -67,6 +127,9 @@ function CronometroPage() {
       if (startTimestampRef.current) {
         const transcurridos = Math.floor((Date.now() - startTimestampRef.current) / 1000);
         setSegundos(transcurridos > 0 ? transcurridos : 0);
+        if (transcurridos >= 720 && !alarmaActivadaRef.current) {
+          iniciarAlarma();
+        }
       }
     }, 1000);
     return () => {
@@ -76,6 +139,12 @@ function CronometroPage() {
       }
     };
   }, [corriendo]);
+
+  useEffect(() => {
+    return () => {
+      detenerAlarma();
+    };
+  }, []);
 
   function persistir(extra: Partial<EstadoGuardado> = {}) {
     if (!capacitacionId) return;
@@ -114,6 +183,7 @@ function CronometroPage() {
       return;
     }
     try {
+      detenerAlarma();
       const nueva = await iniciarCapacitacion(titulo.trim(), descripcion.trim());
       const ts = Date.now();
       startTimestampRef.current = ts;
@@ -151,6 +221,7 @@ function CronometroPage() {
       toast.error("No hay MATINAL en curso para finalizar");
       return;
     }
+    detenerAlarma();
     const duracion = startTimestampRef.current
       ? Math.floor((Date.now() - startTimestampRef.current) / 1000)
       : segundos;
@@ -242,6 +313,8 @@ function CronometroPage() {
           onFinalizar={handleFinalizar}
           pantallaCompleta={fullscreen}
           onPantallaCompleta={setFullscreen}
+          alarma12min={alarma12minActivada}
+          onDetenerAlarma={detenerAlarma}
         />
 
         {guardando && (

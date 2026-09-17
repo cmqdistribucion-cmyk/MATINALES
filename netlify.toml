@@ -4,21 +4,19 @@
 
 [build.environment]
   NODE_VERSION = "20"
-
-[context.production.environment]
+  NITRO_PRESET = "netlify"
   VITE_SUPABASE_PROJECT_ID = "tkeqehxftduaylqbncjt"
   VITE_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_sqwWGQNdXwLxLCn2kUQLAg_hfZ9Ekbv"
   VITE_SUPABASE_URL = "https://tkeqehxftduaylqbncjt.supabase.co"
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
-# Headers for better caching and security
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options = "DENY"
+    X-Frame-Options = "SAMEORIGIN"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
