@@ -30,8 +30,17 @@ function Asistencia() {
   const [marcas, setMarcas] = useState<Record<string, boolean>>({});
   const [capActiva, setCapActiva] = useState<{ id?: string; titulo?: string | undefined } | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
+  const [sectorSeleccionado, setSectorSeleccionado] = useState<string>("__TODOS__");
+  const [busqueda, setBusqueda] = useState("");
   const capActivaRef = useRef<string | null>(null);
   const cargadoRef = useRef(false);
+
+  const sectores = [
+    "__TODOS__",
+    ...Array.from(new Set(personas.map((p) => p.area).filter(Boolean) as string[])).sort((a, b) =>
+      a.localeCompare(b),
+    ),
+  ];
 
   useEffect(() => {
     (async () => {
@@ -122,19 +131,35 @@ function Asistencia() {
     void qc.invalidateQueries({ queryKey: ["asistencias", capId] });
   }
 
+  const personasFiltradas = personas.filter((p) => {
+    const porSector = sectorSeleccionado === "__TODOS__" || p.area === sectorSeleccionado;
+    const porBusqueda =
+      !busqueda.trim() || p.nombre.toLowerCase().includes(busqueda.trim().toLowerCase());
+    return porSector && porBusqueda;
+  });
+
   async function marcarTodos(valor: boolean) {
-    const m: Record<string, boolean> = {};
-    personas.forEach((p) => (m[p.id] = valor));
+    const objetivo = personasFiltradas.length > 0 ? personasFiltradas : personas;
+    const m: Record<string, boolean> = { ...marcas };
+    objetivo.forEach((p) => (m[p.id] = valor));
     setMarcas(m);
     const capId = capActivaRef.current;
+    const scope =
+      sectorSeleccionado === "__TODOS__"
+        ? "todos"
+        : `el sector ${sectorSeleccionado} (${objetivo.length} personas)`;
     if (capId) {
       setSincronizando(true);
       try {
         await guardarMarcasMasivas(
           capId,
-          personas.map((p) => ({ persona: { id: p.id, nombre: p.nombre, area: p.area }, presente: valor })),
+          objetivo.map((p) => ({ persona: { id: p.id, nombre: p.nombre, area: p.area }, presente: valor })),
         );
-        toast.success(valor ? "Todos marcados como presentes y guardados" : "Todos marcados como ausentes y guardados");
+        toast.success(
+          valor
+            ? `Marcados como presentes y guardados: ${scope}`
+            : `Marcados como ausentes y guardados: ${scope}`,
+        );
       } catch (e) {
         console.error(e);
         toast.error("No se pudieron guardar todas las marcas en la nube");
@@ -142,13 +167,17 @@ function Asistencia() {
         setSincronizando(false);
       }
     } else {
-      toast.success(valor ? "Todos marcados como presentes" : "Todos marcados como ausentes");
+      toast.success(
+        valor ? `Marcados como presentes: ${scope}` : `Marcados como ausentes: ${scope}`,
+      );
     }
     void qc.invalidateQueries({ queryKey: ["asistencias", capId] });
   }
 
   const presentes = personas.filter((p) => marcas[p.id] === true).length;
   const ausentes = personas.filter((p) => marcas[p.id] === false).length;
+  const presentesFiltrados = personasFiltradas.filter((p) => marcas[p.id] === true).length;
+  const ausentesFiltrados = personasFiltradas.filter((p) => marcas[p.id] === false).length;
 
   return (
     <div className="min-h-screen bg-cream font-display text-ink">
@@ -228,30 +257,101 @@ function Asistencia() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => marcarTodos(true)}
-                disabled={!capActiva?.id}
+                disabled={!capActiva?.id || personasFiltradas.length === 0}
                 className="rounded-full bg-moss px-4 py-2 text-sm font-semibold text-cream ring-1 ring-moss/30 shadow-sm shadow-moss/10 hover:bg-moss/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Marcar todos presentes
+                {sectorSeleccionado === "__TODOS__"
+                  ? "Marcar todos presentes"
+                  : `Marcar presentes (${sectorSeleccionado})`}
               </button>
               <button
                 onClick={() => marcarTodos(false)}
-                disabled={!capActiva?.id}
+                disabled={!capActiva?.id || personasFiltradas.length === 0}
                 className="rounded-full bg-signal px-4 py-2 text-sm font-semibold text-cream ring-1 ring-signal/30 shadow-sm shadow-signal/10 hover:bg-signal/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Marcar todos ausentes
+                {sectorSeleccionado === "__TODOS__"
+                  ? "Marcar todos ausentes"
+                  : `Marcar ausentes (${sectorSeleccionado})`}
               </button>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-bold uppercase tracking-[0.2em] text-ink/60">
+                Sector / Área
+              </label>
+              <select
+                value={sectorSeleccionado}
+                onChange={(e) => setSectorSeleccionado(e.target.value)}
+                className="rounded-[min(1vw,10px)] bg-cream border-2 border-border px-4 py-2.5 text-base font-medium text-ink focus:outline-none focus:ring-2 focus:ring-signal focus:border-signal min-w-[200px]"
+              >
+                <option value="__TODOS__">Todos los sectores ({personas.length})</option>
+                {sectores.filter((s) => s !== "__TODOS__").map((s) => (
+                  <option key={s} value={s}>
+                    {s} ({personas.filter((p) => p.area === s).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-bold uppercase tracking-[0.2em] text-ink/60">
+                Buscar persona
+              </label>
+              <input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Nombre..."
+                className="rounded-[min(1vw,10px)] bg-cream border-2 border-border px-4 py-2.5 text-base text-ink placeholder:text-ink/40 focus:outline-none focus:ring-2 focus:ring-signal focus:border-signal min-w-[250px]"
+              />
+            </div>
+            {(sectorSeleccionado !== "__TODOS__" || busqueda) && (
+              <button
+                onClick={() => {
+                  setSectorSeleccionado("__TODOS__");
+                  setBusqueda("");
+                }}
+                className="rounded-full bg-steel/20 px-4 py-2.5 text-sm font-semibold text-ink/70 ring-1 ring-border hover:bg-steel/30 transition-colors"
+              >
+                Limpiar filtros
+              </button>
+            )}
+            <div className="ml-auto flex flex-wrap gap-3">
               <div className="rounded-[min(1vw,12px)] bg-moss px-4 py-2 text-cream ring-1 ring-steel">
                 <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cream/70">
                   Presentes
+                  {sectorSeleccionado !== "__TODOS__" && ` · ${sectorSeleccionado}`}
                 </p>
-                <p className="font-mono text-2xl font-bold leading-none tabular-nums">{presentes}</p>
+                <p className="font-mono text-2xl font-bold leading-none tabular-nums">
+                  {sectorSeleccionado === "__TODOS__" ? presentes : presentesFiltrados}
+                  {sectorSeleccionado !== "__TODOS__" && (
+                    <span className="ml-1 text-sm font-semibold opacity-70">/ {presentes}</span>
+                  )}
+                </p>
               </div>
               <div className="rounded-[min(1vw,12px)] bg-signal px-4 py-2 text-cream ring-1 ring-steel">
                 <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cream/70">
                   Ausentes
+                  {sectorSeleccionado !== "__TODOS__" && ` · ${sectorSeleccionado}`}
                 </p>
-                <p className="font-mono text-2xl font-bold leading-none tabular-nums">{ausentes}</p>
+                <p className="font-mono text-2xl font-bold leading-none tabular-nums">
+                  {sectorSeleccionado === "__TODOS__" ? ausentes : ausentesFiltrados}
+                  {sectorSeleccionado !== "__TODOS__" && (
+                    <span className="ml-1 text-sm font-semibold opacity-70">/ {ausentes}</span>
+                  )}
+                </p>
               </div>
+              {sectorSeleccionado !== "__TODOS__" && (
+                <div className="rounded-[min(1vw,12px)] bg-steel px-4 py-2 text-cream ring-1 ring-steel">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cream/70">
+                    Total sector
+                  </p>
+                  <p className="font-mono text-2xl font-bold leading-none tabular-nums">
+                    {personasFiltradas.length}
+                    <span className="ml-1 text-sm font-semibold opacity-70">/ {personas.length}</span>
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -261,7 +361,12 @@ function Asistencia() {
                 Cargá primero la nómina en el sector de administración.
               </p>
             )}
-            {personas.map((p) => (
+            {personas.length > 0 && personasFiltradas.length === 0 && (
+              <p className="py-4 text-sm text-ink/50">
+                No hay personas que coincidan con el filtro de sector o búsqueda.
+              </p>
+            )}
+            {personasFiltradas.map((p) => (
               <div key={p.id} className="flex items-center gap-4 py-3">
                 <div className="grid size-11 shrink-0 place-items-center rounded-full bg-steel/20 font-mono text-sm font-bold">
                   {p.nombre
